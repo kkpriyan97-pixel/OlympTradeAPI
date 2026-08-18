@@ -131,7 +131,25 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🎯 Professional Services
 
-Need custom trading bots or advanced implementations? Visit [Chipa.tech Shop](https://chipa.tech/shop/) for professional development services.
+Need custom trading bots or advanced implementations? Our team builds them for you — see [Custom Bot Development](https://chipatrade.com/services/bot-development).
+
+## ⚡ Trade Without Coding
+
+Already-built bots are running on [Chipa Exchange](https://exchange.chipatrade.com/trade/BTC) — pick one and trade, no setup required.
+
+## 🛠️ Build Faster
+
+[Chipa Editor](https://chipaeditor.com/?utm_source=olymptradeapi&utm_medium=readme&utm_campaign=olymptrade_api_docs&utm_term=support&utm_content=services) autocompletes this entire API with inline docs as you type. Free to start.
+
+## 📈 OlympTrade Account
+
+Everything in this library runs against a live OlympTrade account (payouts up to 93%) — [create one here](https://trkmad.com/2590624).
+
+> ⚠️ Trading carries inherent risk and you can lose your capital. The link above is an affiliate link.
+
+### Affiliate Banners
+
+Ready-made OlympTrade banners live in [`docs/assets/affiliate/`](assets/affiliate/) — 19 sizes, English and Tagalog, all pointing to `https://trkmad.com/2590624`.
 
 ## 📞 Support
 

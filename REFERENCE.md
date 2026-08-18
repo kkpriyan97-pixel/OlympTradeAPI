@@ -114,3 +114,16 @@ if __name__ == "__main__":
 ---
 
 For more details, see the docstrings in each class and method.
+
+---
+
+## Where to Go Next
+
+| | |
+|---|---|
+| ⚡ **Trade without coding** | Pre-built bots running now on [Chipa Exchange](https://exchange.chipatrade.com/trade/BTC) |
+| 🤖 **Custom bot built for you** | [Custom Bot Development](https://chipatrade.com/services/bot-development) |
+| 🛠️ **Autocomplete for this API** | [Chipa Editor](https://chipaeditor.com/?utm_source=olymptradeapi&utm_medium=reference&utm_campaign=olymptrade_api_docs&utm_term=support&utm_content=reference_footer) — free to start |
+| 📈 **Broker account** | [Create your OlympTrade account](https://trkmad.com/2590624) — payouts up to 93% |
+
+> ⚠️ Trading carries inherent risk and you can lose your capital. Never trade money you cannot afford to lose. The OlympTrade link is an affiliate link.

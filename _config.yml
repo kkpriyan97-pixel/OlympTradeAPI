@@ -60,5 +60,11 @@ navigation:
   - title: "Examples"
     url: "/docs/examples.html"
   - title: "Create Your Bot"
-    url: "https://chipa.tech/shop/"
+    url: "https://chipatrade.com/services/bot-development"
+    external: true
+  - title: "Trade Pre-Built Bots"
+    url: "https://exchange.chipatrade.com/trade/BTC"
+    external: true
+  - title: "Chipa Editor"
+    url: "https://chipaeditor.com/?utm_source=olymptradeapi&utm_medium=docs&utm_campaign=olymptrade_api_docs&utm_term=support&utm_content=nav"
     external: true
