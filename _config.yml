@@ -1,5 +1,9 @@
-# Jekyll configuration for GitHub Pages
-# This file ensures proper deployment of the documentation site
+# Jekyll configuration (repository root)
+#
+# NOTE: GitHub Pages for this repository is configured to serve from the
+# /docs folder on main, so the published site is built with docs/_config.yml
+# and this file is NOT read by Pages. It is kept for local Jekyll builds of
+# the repository root and for tooling that expects a root config.
 
 # Build settings
 markdown: kramdown
@@ -30,7 +34,7 @@ plugins:
 # Site settings
 title: "OlympTrade API Documentation"
 description: "Comprehensive documentation for the OlympTrade API with interactive examples and professional services"
-url: "https://your-username.github.io"
+url: "https://chipadevteam.github.io"
 baseurl: "/OlympTradeAPI"
 
 # Collections
