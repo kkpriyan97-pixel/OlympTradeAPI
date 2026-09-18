@@ -9,25 +9,24 @@ async def test_read_only_methods():
     if not token:
         raise RuntimeError("Set OLYMPTRADE_ACCESS_TOKEN in the environment.")
 
-    client = OlympTradeClient(
-        access_token=token,
-        log_raw_messages=False,
-    )
+    client = OlympTradeClient(access_token=token, log_raw_messages=False)
     await client.start()
     try:
         await client.initialize_session()
-        print(f"Initialized session. account_id={client.account_id}, account_group={client.account_group}")
 
-        assets = await client.market.get_available_assets()
-        print(f"Authenticated read-only assets: {len(assets)}")
-        for asset in assets:
-            print(asset)
+        first = await client.market.get_first_available_asset()
+        if not first:
+            raise RuntimeError("No authenticated OlympTrade asset was returned.")
 
-        await client.market.subscribe_ticks("BNBUSD_OTC")
-        print("Subscribed to BNBUSD_OTC ticks.")
+        pair = first.get("pair") or first.get("p") or first.get("symbol") or first.get("instrument")
+        print(f"FIRST_OLYMPTRADE_ASSET={pair}")
+        print(f"FIRST_OLYMPTRADE_ASSET_DATA={first}")
 
-        candles = await client.market.get_candles("BNBUSD_OTC", size=60, count=5)
-        print(f"Read-only candles: {candles}")
+        await client.market.subscribe_ticks(str(pair))
+        print(f"SUBSCRIBED_FIRST_ASSET={pair}")
+
+        candles = await client.market.get_candles(str(pair), size=60, count=5)
+        print(f"FIRST_ASSET_CANDLES={candles}")
     finally:
         await client.stop()
 
