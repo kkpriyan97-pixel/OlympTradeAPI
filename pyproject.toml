@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "olymptrade-ws"
+version = "0.1.0"
+description = "Read-only OlympTrade websocket client"
+requires-python = ">=3.9"
+dependencies = [
+  "websockets>=12",
+]
+
+[tool.setuptools.packages.find]
+include = ["olymptrade_ws*"]
