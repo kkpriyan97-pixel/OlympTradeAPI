@@ -45,9 +45,12 @@ class MarketAPI:
                 [{"pair": pair, "size": size, "to": to_ts, "solid": True}],
                 requires_response=True,
             )
-            if response and response.get("e") == 1003 and isinstance(response.get("d"), list):
-                return response["d"]
-            logger.error(f"Did not receive expected candle response (e:1003). Got: {response}")
+            if response and isinstance(response.get("d"), list):
+                # The current OlympTrade endpoint returns candle payloads with e:10
+                # in addition to older e:1003 responses.
+                if response.get("e") in (10, 1003):
+                    return response["d"]
+            logger.error(f"Did not receive expected candle response (e:10/e:1003). Got: {response}")
         except Exception as e:
             logger.error(f"Failed to get candles for {pair}: {e}")
         return None
