@@ -139,6 +139,38 @@ class MarketAPI:
             logger.error(f"Failed to get profitability: {e}")
             return None
 
+    async def get_available_assets(self, account_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return asset records visible to the authenticated account, read-only."""
+        account_id = account_id or self._client.account_id
+        assets: List[Dict[str, Any]] = []
+
+        if account_id:
+            try:
+                profit = await self.get_profitability(account_id)
+                if isinstance(profit, list):
+                    assets.extend(x for x in profit if isinstance(x, dict))
+            except Exception as e:
+                logger.warning(f"Asset profitability discovery failed: {e}")
+
+        # Also inspect authenticated startup pushes captured by the client.
+        for message in self._client.get_cached_events():
+            data = message.get("d") if isinstance(message, dict) else None
+            if isinstance(data, list):
+                assets.extend(
+                    item for item in data
+                    if isinstance(item, dict)
+                    and any(k in item for k in ("pair", "p", "symbol", "instrument"))
+                )
+            elif isinstance(data, dict) and any(k in data for k in ("pair", "p", "symbol", "instrument")):
+                assets.append(data)
+
+        unique: Dict[str, Dict[str, Any]] = {}
+        for item in assets:
+            pair = item.get("pair") or item.get("p") or item.get("symbol") or item.get("instrument")
+            if pair:
+                unique[str(pair)] = item
+        return list(unique.values())
+
     async def select_asset(self, pair: str, category: str = "digital") -> Optional[Dict[str, Any]]:
          """Selects an asset, potentially retrieving strike/payout info (Events 95, 80)."""
          logger.info(f"Selecting asset {pair} (category: {category})...")
