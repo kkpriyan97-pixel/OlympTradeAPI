@@ -102,6 +102,24 @@ class MarketAPI:
                     unique[key] = item
         return list(unique.values())
 
+    async def get_otc_assets(self, account_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return all currently exposed OTC assets from the authenticated read-only feed.
+
+        OTC assets are kept separate from Flex instruments because Olymptrade documents
+        OTC assets under Fixed Time (FT) mode. This method never places or modifies trades.
+        """
+        assets = await self.get_available_assets(account_id)
+        otc: List[Dict[str, Any]] = []
+        seen = set()
+        for item in assets:
+            pair = item.get("pair") or item.get("p") or item.get("symbol") or item.get("instrument") or item.get("id")
+            if pair and "_OTC" in str(pair).upper():
+                key = str(pair).upper()
+                if key not in seen:
+                    seen.add(key)
+                    otc.append(item)
+        return otc
+
     async def get_first_available_asset(self, account_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         assets = await self.get_available_assets(account_id)
         if not assets:
