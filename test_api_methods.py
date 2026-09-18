@@ -18,6 +18,11 @@ async def test_read_only_methods():
         await client.initialize_session()
         print(f"Initialized session. account_id={client.account_id}, account_group={client.account_group}")
 
+        assets = await client.market.get_available_assets()
+        print(f"Authenticated read-only assets: {len(assets)}")
+        for asset in assets:
+            print(asset)
+
         await client.market.subscribe_ticks("BNBUSD_OTC")
         print("Subscribed to BNBUSD_OTC ticks.")
 
