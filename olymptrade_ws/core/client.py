@@ -24,6 +24,7 @@ class OlympTradeClient:
         
         self._response_futures: Dict[str, asyncio.Future] = {}
         self._event_callbacks: Dict[int, List[Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]]] = defaultdict(list)
+        self._event_cache: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
         self._is_running = False
         self._processing_task: Optional[asyncio.Task] = None
         self._ping_task: Optional[asyncio.Task] = None
@@ -224,6 +225,11 @@ class OlympTradeClient:
         """Handles a single parsed message dictionary."""
         request_uuid = message.get("uuid")
         event_code = message.get("e")
+        if event_code:
+            bucket = self._event_cache[event_code]
+            bucket.append(message)
+            if len(bucket) > 100:
+                del bucket[:-100]
         message_type = message.get("t") # 1: Server Push, 3: Response/Push?
 
         if not event_code:
@@ -266,6 +272,15 @@ class OlympTradeClient:
              # logger.debug(f"Received unhandled event (e:{event_code}): {message}")
              pass
 
+
+    def get_cached_events(self, event_code: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return cached events for read-only market/asset discovery."""
+        if event_code is not None:
+            return list(self._event_cache.get(event_code, []))
+        events: List[Dict[str, Any]] = []
+        for bucket in self._event_cache.values():
+            events.extend(bucket)
+        return events
 
     async def _ping_loop(self):
         logger.info("_ping_loop started.")
