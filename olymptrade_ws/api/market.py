@@ -5,7 +5,6 @@ import time
 from typing import TYPE_CHECKING, Dict, Any, Optional, List, Union
 from datetime import datetime, timezone
 
-from olymptrade_ws.core.protocol import get_current_timestamp_ms
 from olymptrade_ws.olympconfig import parameters as settings
 
 if TYPE_CHECKING:
@@ -45,11 +44,8 @@ class MarketAPI:
                 [{"pair": pair, "size": size, "to": to_ts, "solid": True}],
                 requires_response=True,
             )
-            if response and isinstance(response.get("d"), list):
-                # The current OlympTrade endpoint returns candle payloads with e:10
-                # in addition to older e:1003 responses.
-                if response.get("e") in (10, 1003):
-                    return response["d"]
+            if response and isinstance(response.get("d"), list) and response.get("e") in (10, 1003):
+                return response["d"]
             logger.error(f"Did not receive expected candle response (e:10/e:1003). Got: {response}")
         except Exception as e:
             logger.error(f"Failed to get candles for {pair}: {e}")
@@ -66,7 +62,7 @@ class MarketAPI:
         return None
 
     async def get_available_assets(self, account_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Return asset records visible to the authenticated account, read-only."""
+        """Return authenticated asset records, preferring rich instrument metadata."""
         account_id = account_id or self._client.account_id
         assets: List[Dict[str, Any]] = []
 
@@ -86,15 +82,27 @@ class MarketAPI:
             elif isinstance(data, dict) and any(k in data for k in ("pair", "p", "symbol", "instrument", "id")):
                 assets.append(data)
 
+        def richness(item: Dict[str, Any]) -> int:
+            fields = (
+                "allowed_multiplicators", "multiplicator_suggestions",
+                "default_multiplicator", "min_multiplicator", "max_multiplicator",
+                "group", "group_view", "locked", "locked_trading",
+                "locked_buy", "locked_sell", "disabled", "rank", "volatility",
+                "sales_success_fee", "purchase_fee",
+            )
+            return sum(1 for field in fields if field in item)
+
         unique: Dict[str, Dict[str, Any]] = {}
         for item in assets:
             pair = item.get("pair") or item.get("p") or item.get("symbol") or item.get("instrument") or item.get("id")
             if pair:
-                unique[str(pair)] = item
+                key = str(pair)
+                current = unique.get(key)
+                if current is None or richness(item) > richness(current):
+                    unique[key] = item
         return list(unique.values())
 
     async def get_first_available_asset(self, account_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Get the first authenticated asset available to the account, read-only."""
         assets = await self.get_available_assets(account_id)
         if not assets:
             logger.warning("No authenticated assets were returned.")
