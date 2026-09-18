@@ -78,14 +78,14 @@ class MarketAPI:
                 assets.extend(
                     item for item in data
                     if isinstance(item, dict)
-                    and any(k in item for k in ("pair", "p", "symbol", "instrument"))
+                    and any(k in item for k in ("pair", "p", "symbol", "instrument", "id"))
                 )
-            elif isinstance(data, dict) and any(k in data for k in ("pair", "p", "symbol", "instrument")):
+            elif isinstance(data, dict) and any(k in data for k in ("pair", "p", "symbol", "instrument", "id")):
                 assets.append(data)
 
         unique: Dict[str, Dict[str, Any]] = {}
         for item in assets:
-            pair = item.get("pair") or item.get("p") or item.get("symbol") or item.get("instrument")
+            pair = item.get("pair") or item.get("p") or item.get("symbol") or item.get("instrument") or item.get("id")
             if pair:
                 unique[str(pair)] = item
         return list(unique.values())
