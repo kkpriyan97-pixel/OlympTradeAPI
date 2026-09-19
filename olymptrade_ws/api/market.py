@@ -17,10 +17,63 @@ class MarketAPI:
         self._client = client
 
     async def subscribe_ticks(self, pair: str) -> None:
+        """Subscribe to the verified live quote stream (event 12).
+        
+        Event 280 is not a tick subscription on the current session and can
+        return invalid_request even when event 12 succeeds, so it is not sent
+        here.
+        """
         logger.info(f"Subscribing to ticks for {pair}...")
-        await self._client.send_request(12, [{"pair": pair}], requires_response=True)
-        await self._client.send_request(280, [{"pair": pair}], requires_response=True)
-        logger.info(f"Successfully sent tick subscription requests for {pair}.")
+        response = await self._client.send_request(
+            12, [{"pair": pair}], requires_response=True, timeout=5
+        )
+        if isinstance(response, dict) and response.get("err"):
+            raise RuntimeError(f"tick subscription rejected for {pair}: {response.get('err')}")
+        logger.info(f"Tick subscription accepted for {pair}.")
+    
+    async def get_live_snapshot(self, pair: str) -> Optional[Dict[str, Any]]:
+        """Read the freshest available short-interval candle as a quote snapshot.
+        
+        This is read-only market data. It is used when the unsolicited tick
+        stream does not deliver a current quote for a qualified asset.
+        """
+        to_ts = int(time.time())
+        try:
+            response = await self._client.send_request(
+                10,
+                [{"pair": pair, "size": 5, "to": to_ts, "solid": False}],
+                requires_response=True,
+                timeout=3,
+            )
+            if not (isinstance(response, dict) and response.get("e") in (10, 1003)):
+                return None
+            data = response.get("d")
+            candles = []
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        candles.extend(item.get("candles", [])) if isinstance(item.get("candles"), list) else candles.append(item)
+            if not candles:
+                return None
+            valid=[]
+            for c in candles:
+                if not isinstance(c, dict):
+                    continue
+                q=c.get("close", c.get("c"))
+                ts=c.get("time", c.get("t"))
+                try:
+                    if q is None:
+                        continue
+                    valid.append((float(ts) if ts is not None else float(to_ts), float(q)))
+                except Exception:
+                    continue
+            if not valid:
+                return None
+            ts,price=max(valid,key=lambda x:x[0])
+            return {"pair":pair,"price":price,"timestamp":ts}
+        except Exception as e:
+            logger.debug(f"Live snapshot failed for {pair}: {e}")
+            return None
 
     async def unsubscribe_ticks(self, pair: str) -> None:
         logger.info(f"Unsubscribing from ticks for {pair}...")
