@@ -115,45 +115,77 @@ class MarketAPI:
         return None
 
     async def get_available_assets(self, account_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Return authenticated asset records, preferring rich instrument metadata."""
+        """Return only the assets reported by the authenticated account-scoped
+        profitability/availability response (event 182).
+
+        Do not merge the generic cached websocket event stream here. The cache can
+        contain global/region/catalog instruments that are not part of the current
+        account's visible trading universe.
+        """
         account_id = account_id or self._client.account_id
-        assets: List[Dict[str, Any]] = []
+        if not account_id:
+            logger.warning("ACCOUNT_ASSET_API_MISSING_ACCOUNT_ID")
+            return []
 
-        if account_id:
-            profit = await self.get_profitability(account_id)
-            if isinstance(profit, list):
-                assets.extend(x for x in profit if isinstance(x, dict))
+        profit = await self.get_profitability(account_id)
+        if not isinstance(profit, list):
+            logger.warning("ACCOUNT_ASSET_API_EMPTY account_id=%s", account_id)
+            return []
 
-        for message in self._client.get_cached_events():
-            data = message.get("d") if isinstance(message, dict) else None
-            if isinstance(data, list):
-                assets.extend(
-                    item for item in data
-                    if isinstance(item, dict)
-                    and any(k in item for k in ("pair", "p", "symbol", "instrument", "id"))
-                )
-            elif isinstance(data, dict) and any(k in data for k in ("pair", "p", "symbol", "instrument", "id")):
-                assets.append(data)
+        def pair_of(item: Dict[str, Any]) -> str:
+            return str(
+                item.get("pair")
+                or item.get("p")
+                or item.get("symbol")
+                or item.get("instrument")
+                or item.get("id")
+                or ""
+            )
+
+        def explicit_unavailable(item: Dict[str, Any]) -> bool:
+            if item.get("disabled") is True:
+                return True
+            if item.get("locked") is True or item.get("locked_trading") is True:
+                return True
+            for key in ("active", "available", "tradable", "is_active", "is_available", "is_tradable"):
+                if key in item and item.get(key) is False:
+                    return True
+            status = str(item.get("status") or item.get("state") or "").strip().lower()
+            return status in {"disabled", "locked", "inactive", "unavailable", "closed", "off"}
 
         def richness(item: Dict[str, Any]) -> int:
             fields = (
+                "title", "display_name", "displayName", "name", "pair", "p", "symbol",
                 "allowed_multiplicators", "multiplicator_suggestions",
                 "default_multiplicator", "min_multiplicator", "max_multiplicator",
                 "group", "group_view", "locked", "locked_trading",
                 "locked_buy", "locked_sell", "disabled", "rank", "volatility",
-                "sales_success_fee", "purchase_fee",
+                "sales_success_fee", "purchase_fee", "active", "available",
+                "tradable", "is_active", "is_available", "is_tradable", "status",
             )
             return sum(1 for field in fields if field in item)
 
         unique: Dict[str, Dict[str, Any]] = {}
-        for item in assets:
-            pair = item.get("pair") or item.get("p") or item.get("symbol") or item.get("instrument") or item.get("id")
-            if pair:
-                key = str(pair)
-                current = unique.get(key)
-                if current is None or richness(item) > richness(current):
-                    unique[key] = item
-        return list(unique.values())
+        rejected = 0
+        for item in profit:
+            if not isinstance(item, dict):
+                continue
+            pair = pair_of(item)
+            if not pair:
+                continue
+            if explicit_unavailable(item):
+                rejected += 1
+                continue
+            current = unique.get(pair)
+            if current is None or richness(item) > richness(current):
+                unique[pair] = item
+
+        result = list(unique.values())
+        logger.info(
+            "ACCOUNT_ASSET_API_SOURCE account_id=%s event=182 raw=%d accepted=%d rejected=%d",
+            account_id, len(profit), len(result), rejected
+        )
+        return result
 
     async def get_otc_assets(self, account_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return all currently exposed OTC assets from the authenticated read-only feed.
