@@ -221,7 +221,7 @@ class OlympTradeClient:
         logger.info("Message processing loop finished.")
 
     async def _dispatch_message(self, message: Dict[str, Any]):
-        logger.info(f"_dispatch_message called with message: {message}")
+        # Per-message payloads can be very large (candles/ticks); keep this at DEBUG so\n        # production INFO logs do not flood the process and slow market analysis.\n        logger.debug("_dispatch_message event=%s type=%s", message.get("e"), message.get("t"))
         """Handles a single parsed message dictionary."""
         request_uuid = message.get("uuid")
         event_code = message.get("e")
