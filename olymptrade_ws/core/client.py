@@ -39,8 +39,11 @@ class OlympTradeClient:
 
         # --- Internal State ---
         self._latest_balance: Dict[str, Any] = {} # Store latest balance update (e:55)
-        self.account_id = None
-        self.account_group = None # To store the account group (demo/real)
+        # Preserve explicit account selection supplied by the caller. Older
+        # versions accidentally reset these values here.
+        self.account_id = account_id
+        self.account_group = account_group
+        self._session_initialized = False
 
 
     async def start(self):
@@ -52,6 +55,7 @@ class OlympTradeClient:
         try:
             await self.connection.connect()
             self._is_running = True
+            self._session_initialized = False
             self._processing_task = asyncio.create_task(self._process_messages())
             self._ping_task = asyncio.create_task(self._ping_loop())
             logger.info("Client started successfully.")
@@ -68,6 +72,7 @@ class OlympTradeClient:
             return
             
         self._is_running = False # Signal loops to stop
+        self._session_initialized = False
         
         if self._ping_task and not self._ping_task.done():
             self._ping_task.cancel()
@@ -343,11 +348,20 @@ class OlympTradeClient:
 
     async def initialize_session(self):
         """
-        Sends the required subscription, ping, and account info requests after connecting.
-        This mimics the browser's startup sequence.
+        Prepare the authenticated read-only session and resolve the demo account
+        from the broker's unsolicited balance event (e:55).
+
+        Event 1068/1043 are not used for identity resolution here because this
+        repository's reference code documents them as speculative, while e:55
+        carries the balance/account records after startup subscriptions. An
+        explicit account_id supplied by the caller is always preserved.
         """
-        logger.info("Sending initial subscription, ping, and account info requests...")
-        # 1. Send e:98 subscriptions (mimic browser)
+        if self._session_initialized:
+            logger.debug("Session already initialized.")
+            return
+
+        logger.info("Preparing authenticated session from balance/account event (e:55)...")
+
         startup_subscriptions = [
             [220],
             [110,700,112,140,1038,1037,1039,141,22,26,111],
@@ -361,34 +375,44 @@ class OlympTradeClient:
             [126],
         ]
         for sub in startup_subscriptions:
-            await self.send_request(98, sub, requires_response=False)
-        # 2. Send initial pings (e:90) - not strictly required, but mimics browser
-        import uuid
+            await self.send_request(settings.E_SUBSCRIBE_EVENTS, sub, requires_response=False)
+
         for _ in range(2):
-            await self.send_request(90, {}, requires_response=True)  # uuid auto-generated
-        # 3. Request account info (demo and real)
-        self.account_id = self.account_id or None
-        self.account_group = self.account_group or None
-        for group in ["demo", "real"]:
-            try:
-                resp = await self.send_request(1068, [{"group": group}], requires_response=True)
-                logger.info(f"Account info response for group {group}: {resp}")
-                if resp and 'd' in resp and isinstance(resp['d'], list) and resp['d']:
-                    self.account_id = resp['d'][0].get('account_id')
-                    self.account_group = group
-                    logger.info(f"Set account_id to {self.account_id} (group: {group})")
-                    break
-            except Exception as e:
-                logger.warning(f"Failed to get account_id for group {group}: {e}")
+            await self.send_request(settings.E_PING, {}, requires_response=True, timeout=5)
+
         if not self.account_id:
-            logger.error("Could not determine account_id from account info requests.")
-        # 4. Request balance for the found account_id
-        if self.account_id:
-            try:
-                resp = await self.send_request(1043, [{"account_id": self.account_id, "group": self.account_group}], requires_response=True)
-                logger.info(f"Balance info response: {resp}")
-            except Exception as e:
-                logger.warning(f"Failed to get balance for account_id {self.account_id}: {e}")
+            deadline = asyncio.get_running_loop().time() + 8.0
+            while asyncio.get_running_loop().time() < deadline:
+                for message in self.get_cached_events(settings.E_BALANCE_UPDATE):
+                    data = message.get("d") if isinstance(message, dict) else None
+                    if not isinstance(data, list):
+                        continue
+                    demo_accounts = [
+                        acc for acc in data
+                        if isinstance(acc, dict)
+                        and str(acc.get("group", "")).lower() == "demo"
+                        and acc.get("account_id") is not None
+                    ]
+                    if demo_accounts:
+                        self.account_id = demo_accounts[0].get("account_id")
+                        self.account_group = "demo"
+                        logger.info(
+                            "SESSION_DEMO_ACCOUNT_FROM_EVENT55 account_id=%s candidates=%d",
+                            self.account_id, len(demo_accounts)
+                        )
+                        break
+                if self.account_id:
+                    break
+                await asyncio.sleep(0.1)
+
+        if not self.account_id:
+            logger.warning("SESSION_DEMO_ACCOUNT_NOT_FOUND event55_timeout_seconds=8")
+
+        self._session_initialized = True
+        logger.info(
+            "AUTHENTICATED_SESSION_READY account_id=%s account_group=%s source=event55",
+            self.account_id, self.account_group
+        )
 
     async def wait_for_balance(self, timeout: float = 10.0, poll_interval: float = 0.5):
         """
