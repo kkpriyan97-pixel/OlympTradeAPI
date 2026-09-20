@@ -31,14 +31,12 @@ class MarketAPI:
             raise RuntimeError(f"tick subscription rejected for {pair}: unexpected_response={response}")
         if response.get("err"):
             raise RuntimeError(f"tick subscription rejected for {pair}: {response.get('err')}")
-        related = await self._client.send_request(
-            280, [{"pair": pair}], requires_response=True, timeout=5
-        )
-        if not isinstance(related, dict) or related.get("e") != 280:
-            raise RuntimeError(f"tick related subscription rejected for {pair}: unexpected_response={related}")
-        if related.get("err"):
-            raise RuntimeError(f"tick related subscription rejected for {pair}: {related.get('err')}")
-        logger.info(f"Tick subscription accepted for {pair} (events 12+280).")
+        # Event 12 is the verified per-pair tick subscription request.
+        # Do NOT send event 280 here: on the current session it is not a
+        # required tick subscription and can return invalid_request after the
+        # valid event-12 subscription, which previously made every subscription
+        # look failed to the caller.
+        logger.info(f"Tick subscription accepted for {pair} (event 12).")
     
     async def get_live_snapshot(self, pair: str) -> Optional[Dict[str, Any]]:
         """Read the freshest available short-interval candle as a quote snapshot.
@@ -87,8 +85,7 @@ class MarketAPI:
     async def unsubscribe_ticks(self, pair: str) -> None:
         logger.info(f"Unsubscribing from ticks for {pair}...")
         await self._client.send_request(13, [{"pair": pair}], requires_response=True)
-        await self._client.send_request(281, [{"pair": pair}], requires_response=True)
-        logger.info(f"Successfully sent tick unsubscription requests for {pair}.")
+        logger.info(f"Successfully sent tick unsubscription request for {pair} (event 13).")
 
     async def get_candles(self, pair: str, size: int, count: int, end_time: Optional[Union[datetime, int]] = None, solid: bool = True) -> Optional[List[Dict[str, Any]]]:
         if end_time is None:
