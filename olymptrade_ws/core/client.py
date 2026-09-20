@@ -348,13 +348,13 @@ class OlympTradeClient:
 
     async def initialize_session(self):
         """
-        Prepare the authenticated read-only session and resolve the demo account
-        from the broker's unsolicited balance event (e:55).
+        Prepare the authenticated read-only session and validate the requested
+        demo account from the broker's balance/account event (e:55).
 
-        Event 1068/1043 are not used for identity resolution here because this
+        Event 1068/1043 are not used for account identity because this
         repository's reference code documents them as speculative, while e:55
-        carries the balance/account records after startup subscriptions. An
-        explicit account_id supplied by the caller is always preserved.
+        carries account records after startup subscriptions. An explicit
+        account_id is never replaced by another account returned by the server.
         """
         if self._session_initialized:
             logger.debug("Session already initialized.")
@@ -380,33 +380,66 @@ class OlympTradeClient:
         for _ in range(2):
             await self.send_request(settings.E_PING, {}, requires_response=True, timeout=5)
 
-        if not self.account_id:
-            deadline = asyncio.get_running_loop().time() + 8.0
-            while asyncio.get_running_loop().time() < deadline:
-                for message in self.get_cached_events(settings.E_BALANCE_UPDATE):
-                    data = message.get("d") if isinstance(message, dict) else None
-                    if not isinstance(data, list):
-                        continue
-                    demo_accounts = [
-                        acc for acc in data
-                        if isinstance(acc, dict)
+        expected_account_id = self.account_id
+        expected_group = str(self.account_group or "demo").lower()
+
+        # Always wait briefly for e:55 so an explicit account can be verified
+        # against the authenticated session instead of merely trusting a local
+        # environment variable.
+        deadline = asyncio.get_running_loop().time() + 8.0
+        demo_accounts = []
+        while asyncio.get_running_loop().time() < deadline:
+            for message in self.get_cached_events(settings.E_BALANCE_UPDATE):
+                data = message.get("d") if isinstance(message, dict) else None
+                if not isinstance(data, list):
+                    continue
+                for acc in data:
+                    if (
+                        isinstance(acc, dict)
                         and str(acc.get("group", "")).lower() == "demo"
                         and acc.get("account_id") is not None
-                    ]
-                    if demo_accounts:
-                        self.account_id = demo_accounts[0].get("account_id")
-                        self.account_group = "demo"
-                        logger.info(
-                            "SESSION_DEMO_ACCOUNT_FROM_EVENT55 account_id=%s candidates=%d",
-                            self.account_id, len(demo_accounts)
+                    ):
+                        demo_accounts.append(acc)
+            ids = []
+            for acc in demo_accounts:
+                try:
+                    ids.append(int(acc.get("account_id")))
+                except (TypeError, ValueError):
+                    continue
+            ids = sorted(set(ids))
+            if ids:
+                logger.info("SESSION_EVENT55_DEMO_ACCOUNTS ids=%s count=%d", ids, len(ids))
+                if expected_account_id is not None:
+                    try:
+                        expected_int = int(expected_account_id)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(f"Invalid account_id={expected_account_id!r}") from exc
+                    if expected_int not in ids:
+                        raise RuntimeError(
+                            f"Authenticated session does not expose requested demo account {expected_int}; "
+                            f"exposed_demo_accounts={ids}"
                         )
-                        break
-                if self.account_id:
-                    break
-                await asyncio.sleep(0.1)
+                    self.account_id = expected_int
+                    self.account_group = expected_group
+                    logger.info(
+                        "SESSION_DEMO_ACCOUNT_VERIFIED account_id=%s group=%s source=event55",
+                        self.account_id, self.account_group
+                    )
+                else:
+                    self.account_id = ids[0]
+                    self.account_group = "demo"
+                    logger.info(
+                        "SESSION_DEMO_ACCOUNT_SELECTED account_id=%s group=demo source=event55",
+                        self.account_id
+                    )
+                break
+            await asyncio.sleep(0.1)
 
         if not self.account_id:
             logger.warning("SESSION_DEMO_ACCOUNT_NOT_FOUND event55_timeout_seconds=8")
+        elif expected_account_id is not None:
+            # Explicit account was verified above. Keep it unchanged.
+            self.account_group = expected_group
 
         self._session_initialized = True
         logger.info(
