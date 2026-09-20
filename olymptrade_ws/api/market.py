@@ -19,39 +19,47 @@ class MarketAPI:
     async def subscribe_ticks(self, pair: str) -> None:
         """Subscribe one pair to the authenticated Event-1 tick stream.
 
-        The live account connection is slot-limited. Event 12 is the verified
-        per-pair tick subscription; when the broker rejects it, do not issue
-        Event 280 as a second speculative request. The caller's rotation
-        worker will retry the pair on the next slot rotation.
+        The current connection has a small simultaneous-subscription capacity.
+        Use only the verified Event-12 request and retry one transient rejection
+        before returning control to the caller's rotation worker.
         """
         logger.info("Subscribing to ticks for %s...", pair)
-        try:
-            response = await self._client.send_request(
-                12,
-                [{"pair": pair}],
-                requires_response=True,
-                timeout=5,
-            )
-            err = response.get("err") if isinstance(response, dict) else None
-            accepted = (
-                isinstance(response, dict)
-                and not err
-                and response.get("e") == 12
-            )
-            if accepted:
-                logger.info("Tick subscription event=12 accepted pair=%s", pair)
-                return
-            logger.warning(
-                "Tick subscription event=12 rejected pair=%s err=%s",
-                pair, err or response
-            )
-        except Exception as e:
-            logger.warning(
-                "Tick subscription event=12 failed pair=%s type=%s message=%s",
-                pair, type(e).__name__, str(e)[:120]
-            )
+        last_err = None
+        for attempt in range(2):
+            try:
+                response = await self._client.send_request(
+                    12,
+                    [{"pair": pair}],
+                    requires_response=True,
+                    timeout=2.5,
+                )
+                err = response.get("err") if isinstance(response, dict) else None
+                accepted = (
+                    isinstance(response, dict)
+                    and not err
+                    and response.get("e") == 12
+                )
+                if accepted:
+                    logger.info(
+                        "Tick subscription event=12 accepted pair=%s attempt=%d",
+                        pair, attempt + 1
+                    )
+                    return
+                last_err = err or response
+                logger.warning(
+                    "Tick subscription event=12 rejected pair=%s attempt=%d err=%s",
+                    pair, attempt + 1, last_err
+                )
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {str(e)[:120]}"
+                logger.warning(
+                    "Tick subscription event=12 failed pair=%s attempt=%d error=%s",
+                    pair, attempt + 1, last_err
+                )
+            if attempt == 0:
+                await asyncio.sleep(0.35)
         raise RuntimeError(
-            f"tick subscription rejected for {pair}: event 12 was rejected"
+            f"tick subscription rejected for {pair}: event 12 was rejected after 2 attempts"
         )
 
     async def unsubscribe_ticks(self, pair: str) -> None:
