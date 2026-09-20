@@ -31,7 +31,14 @@ class MarketAPI:
             raise RuntimeError(f"tick subscription rejected for {pair}: unexpected_response={response}")
         if response.get("err"):
             raise RuntimeError(f"tick subscription rejected for {pair}: {response.get('err')}")
-        logger.info(f"Tick subscription accepted for {pair}.")
+        related = await self._client.send_request(
+            280, [{"pair": pair}], requires_response=True, timeout=5
+        )
+        if not isinstance(related, dict) or related.get("e") != 280:
+            raise RuntimeError(f"tick related subscription rejected for {pair}: unexpected_response={related}")
+        if related.get("err"):
+            raise RuntimeError(f"tick related subscription rejected for {pair}: {related.get('err')}")
+        logger.info(f"Tick subscription accepted for {pair} (events 12+280).")
     
     async def get_live_snapshot(self, pair: str) -> Optional[Dict[str, Any]]:
         """Read the freshest available short-interval candle as a quote snapshot.
