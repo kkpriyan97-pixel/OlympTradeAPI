@@ -17,70 +17,54 @@ class MarketAPI:
         self._client = client
 
     async def subscribe_ticks(self, pair: str) -> None:
-        """Subscribe to the verified live quote stream (event 12).
-        
-        Event 280 is not a tick subscription on the current session and can
-        return invalid_request even when event 12 succeeds, so it is not sent
-        here.
+        """Subscribe to the broker's live Event-1 tick stream for one account asset.
+
+        The current OlympTrade websocket expects the browser-style pair
+        subscription sequence (events 12 and 280). Some instruments may reject
+        one of the two requests while still becoming subscribed, so the method
+        treats either successful request as sufficient and never fabricates a
+        quote.
         """
-        logger.info(f"Subscribing to ticks for {pair}...")
-        response = await self._client.send_request(
-            12, [{"pair": pair}], requires_response=True, timeout=5
+        logger.info("Subscribing to ticks for %s...", pair)
+        responses = []
+
+        for event_code in (12, 280):
+            try:
+                response = await self._client.send_request(
+                    event_code,
+                    [{"pair": pair}],
+                    requires_response=True,
+                    timeout=5,
+                )
+                responses.append((event_code, response))
+                err = response.get("err") if isinstance(response, dict) else None
+                if err:
+                    logger.warning(
+                        "Tick subscription event=%s rejected pair=%s err=%s",
+                        event_code, pair, err
+                    )
+                else:
+                    logger.info(
+                        "Tick subscription event=%s accepted pair=%s",
+                        event_code, pair
+                    )
+            except Exception as e:
+                responses.append((event_code, None))
+                logger.warning(
+                    "Tick subscription event=%s failed pair=%s type=%s message=%s",
+                    event_code, pair, type(e).__name__, str(e)[:120]
+                )
+
+        accepted = any(
+            isinstance(response, dict)
+            and not response.get("err")
+            and response.get("e") == event_code
+            for event_code, response in responses
         )
-        if not isinstance(response, dict) or response.get("e") != 12:
-            raise RuntimeError(f"tick subscription rejected for {pair}: unexpected_response={response}")
-        if response.get("err"):
-            raise RuntimeError(f"tick subscription rejected for {pair}: {response.get('err')}")
-        # Event 12 is the verified per-pair tick subscription request.
-        # Do NOT send event 280 here: on the current session it is not a
-        # required tick subscription and can return invalid_request after the
-        # valid event-12 subscription, which previously made every subscription
-        # look failed to the caller.
-        logger.info(f"Tick subscription accepted for {pair} (event 12).")
-    
-    async def get_live_snapshot(self, pair: str) -> Optional[Dict[str, Any]]:
-        """Read the freshest available short-interval candle as a quote snapshot.
-        
-        This is read-only market data. It is used when the unsolicited tick
-        stream does not deliver a current quote for a qualified asset.
-        """
-        to_ts = int(time.time())
-        try:
-            response = await self._client.send_request(
-                10,
-                [{"pair": pair, "size": 5, "to": to_ts, "solid": False}],
-                requires_response=True,
-                timeout=3,
+        if not accepted:
+            raise RuntimeError(
+                f"tick subscription rejected for {pair}: no accepted browser-style subscription event"
             )
-            if not (isinstance(response, dict) and response.get("e") in (10, 1003)):
-                return None
-            data = response.get("d")
-            candles = []
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        candles.extend(item.get("candles", [])) if isinstance(item.get("candles"), list) else candles.append(item)
-            if not candles:
-                return None
-            valid=[]
-            for c in candles:
-                if not isinstance(c, dict):
-                    continue
-                q=c.get("close", c.get("c"))
-                ts=c.get("time", c.get("t"))
-                try:
-                    if q is None:
-                        continue
-                    valid.append((float(ts) if ts is not None else float(to_ts), float(q)))
-                except Exception:
-                    continue
-            if not valid:
-                return None
-            ts,price=max(valid,key=lambda x:x[0])
-            return {"pair":pair,"price":price,"timestamp":ts}
-        except Exception as e:
-            logger.debug(f"Live snapshot failed for {pair}: {e}")
-            return None
 
     async def unsubscribe_ticks(self, pair: str) -> None:
         logger.info(f"Unsubscribing from ticks for {pair}...")
