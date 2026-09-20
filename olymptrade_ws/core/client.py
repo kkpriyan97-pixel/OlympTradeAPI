@@ -388,6 +388,7 @@ class OlympTradeClient:
         # second push; binding to the first message can create a false mismatch.
         deadline = asyncio.get_running_loop().time() + 8.0
         account_ids = set()
+        last_logged_ids = None
         while asyncio.get_running_loop().time() < deadline:
             for message in self.get_cached_events(settings.E_BALANCE_UPDATE):
                 data = message.get("d") if isinstance(message, dict) else None
@@ -405,10 +406,13 @@ class OlympTradeClient:
                             continue
 
             if account_ids:
-                logger.info(
-                    "SESSION_EVENT55_DEMO_ACCOUNTS ids=%s count=%d",
-                    sorted(account_ids), len(account_ids)
-                )
+                current_ids = sorted(account_ids)
+                if current_ids != last_logged_ids:
+                    logger.info(
+                        "SESSION_EVENT55_DEMO_ACCOUNTS ids=%s count=%d",
+                        current_ids, len(current_ids)
+                    )
+                    last_logged_ids = current_ids
                 if expected_account_id is not None:
                     try:
                         expected_int = int(expected_account_id)
