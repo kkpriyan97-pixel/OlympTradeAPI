@@ -27,7 +27,9 @@ class MarketAPI:
         response = await self._client.send_request(
             12, [{"pair": pair}], requires_response=True, timeout=5
         )
-        if isinstance(response, dict) and response.get("err"):
+        if not isinstance(response, dict) or response.get("e") != 12:
+            raise RuntimeError(f"tick subscription rejected for {pair}: unexpected_response={response}")
+        if response.get("err"):
             raise RuntimeError(f"tick subscription rejected for {pair}: {response.get('err')}")
         logger.info(f"Tick subscription accepted for {pair}.")
     
@@ -81,7 +83,7 @@ class MarketAPI:
         await self._client.send_request(281, [{"pair": pair}], requires_response=True)
         logger.info(f"Successfully sent tick unsubscription requests for {pair}.")
 
-    async def get_candles(self, pair: str, size: int, count: int, end_time: Optional[Union[datetime, int]] = None) -> Optional[List[Dict[str, Any]]]:
+    async def get_candles(self, pair: str, size: int, count: int, end_time: Optional[Union[datetime, int]] = None, solid: bool = True) -> Optional[List[Dict[str, Any]]]:
         if end_time is None:
             to_ts = int(time.time())
         elif isinstance(end_time, datetime):
@@ -94,7 +96,7 @@ class MarketAPI:
         try:
             response = await self._client.send_request(
                 10,
-                [{"pair": pair, "size": size, "to": to_ts, "solid": True}],
+                [{"pair": pair, "size": size, "to": to_ts, "solid": bool(solid)}],
                 requires_response=True,
             )
             if response and isinstance(response.get("d"), list) and response.get("e") in (10, 1003):
