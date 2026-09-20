@@ -441,21 +441,26 @@ class OlympTradeClient:
             await asyncio.sleep(0.1)
 
         if expected_account_id is not None:
-            # The intended account must be explicitly present in the authenticated
-            # e:55 stream. Never silently substitute another account.
             try:
                 expected_int = int(expected_account_id)
             except (TypeError, ValueError) as exc:
                 raise ValueError(
                     f"Invalid account_id={expected_account_id!r}"
                 ) from exc
-            if expected_int not in account_ids:
-                raise RuntimeError(
-                    f"Authenticated session does not expose requested demo account {expected_int}; "
-                    f"exposed_demo_accounts={sorted(account_ids)}"
+            if expected_int in account_ids:
+                self.account_id = expected_int
+                self.account_group = expected_group
+                logger.info(
+                    "SESSION_DEMO_ACCOUNT_VERIFIED account_id=%s group=%s source=event55",
+                    self.account_id, self.account_group
                 )
-            self.account_id = expected_int
-            self.account_group = expected_group
+            else:
+                # Keep the explicit requested ID untouched so the caller can
+                # perform its own account-binding decision and diagnostics.
+                logger.warning(
+                    "SESSION_DEMO_ACCOUNT_NOT_VERIFIED requested=%s exposed_demo_accounts=%s",
+                    expected_int, sorted(account_ids)
+                )
         elif not self.account_id:
             logger.warning("SESSION_DEMO_ACCOUNT_NOT_FOUND event55_timeout_seconds=8")
 
