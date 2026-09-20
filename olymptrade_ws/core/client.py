@@ -383,11 +383,11 @@ class OlympTradeClient:
         expected_account_id = self.account_id
         expected_group = str(self.account_group or "demo").lower()
 
-        # Always wait briefly for e:55 so an explicit account can be verified
-        # against the authenticated session instead of merely trusting a local
-        # environment variable.
+        # Collect the complete e:55 account set for a short settling window.
+        # Some sessions can emit an initial account-state push followed by a
+        # second push; binding to the first message can create a false mismatch.
         deadline = asyncio.get_running_loop().time() + 8.0
-        demo_accounts = []
+        account_ids = set()
         while asyncio.get_running_loop().time() < deadline:
             for message in self.get_cached_events(settings.E_BALANCE_UPDATE):
                 data = message.get("d") if isinstance(message, dict) else None
@@ -399,47 +399,61 @@ class OlympTradeClient:
                         and str(acc.get("group", "")).lower() == "demo"
                         and acc.get("account_id") is not None
                     ):
-                        demo_accounts.append(acc)
-            ids = []
-            for acc in demo_accounts:
-                try:
-                    ids.append(int(acc.get("account_id")))
-                except (TypeError, ValueError):
-                    continue
-            ids = sorted(set(ids))
-            if ids:
-                logger.info("SESSION_EVENT55_DEMO_ACCOUNTS ids=%s count=%d", ids, len(ids))
+                        try:
+                            account_ids.add(int(acc.get("account_id")))
+                        except (TypeError, ValueError):
+                            continue
+
+            if account_ids:
+                logger.info(
+                    "SESSION_EVENT55_DEMO_ACCOUNTS ids=%s count=%d",
+                    sorted(account_ids), len(account_ids)
+                )
                 if expected_account_id is not None:
                     try:
                         expected_int = int(expected_account_id)
                     except (TypeError, ValueError) as exc:
-                        raise ValueError(f"Invalid account_id={expected_account_id!r}") from exc
-                    if expected_int not in ids:
-                        raise RuntimeError(
-                            f"Authenticated session does not expose requested demo account {expected_int}; "
-                            f"exposed_demo_accounts={ids}"
+                        raise ValueError(
+                            f"Invalid account_id={expected_account_id!r}"
+                        ) from exc
+                    if expected_int in account_ids:
+                        self.account_id = expected_int
+                        self.account_group = expected_group
+                        logger.info(
+                            "SESSION_DEMO_ACCOUNT_VERIFIED account_id=%s group=%s source=event55",
+                            self.account_id, self.account_group
                         )
-                    self.account_id = expected_int
-                    self.account_group = expected_group
-                    logger.info(
-                        "SESSION_DEMO_ACCOUNT_VERIFIED account_id=%s group=%s source=event55",
-                        self.account_id, self.account_group
-                    )
-                else:
-                    self.account_id = ids[0]
+                        break
+
+                elif self.account_id is None:
+                    self.account_id = min(account_ids)
                     self.account_group = "demo"
                     logger.info(
                         "SESSION_DEMO_ACCOUNT_SELECTED account_id=%s group=demo source=event55",
                         self.account_id
                     )
-                break
+                    break
+
             await asyncio.sleep(0.1)
 
-        if not self.account_id:
-            logger.warning("SESSION_DEMO_ACCOUNT_NOT_FOUND event55_timeout_seconds=8")
-        elif expected_account_id is not None:
-            # Explicit account was verified above. Keep it unchanged.
+        if expected_account_id is not None:
+            # The intended account must be explicitly present in the authenticated
+            # e:55 stream. Never silently substitute another account.
+            try:
+                expected_int = int(expected_account_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid account_id={expected_account_id!r}"
+                ) from exc
+            if expected_int not in account_ids:
+                raise RuntimeError(
+                    f"Authenticated session does not expose requested demo account {expected_int}; "
+                    f"exposed_demo_accounts={sorted(account_ids)}"
+                )
+            self.account_id = expected_int
             self.account_group = expected_group
+        elif not self.account_id:
+            logger.warning("SESSION_DEMO_ACCOUNT_NOT_FOUND event55_timeout_seconds=8")
 
         self._session_initialized = True
         logger.info(
