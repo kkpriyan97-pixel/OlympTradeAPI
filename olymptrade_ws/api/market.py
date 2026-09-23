@@ -90,6 +90,55 @@ class MarketAPI:
             logger.error(f"Failed to get candles for {pair}: {e}")
         return None
 
+    async def get_live_quote(self, pair: str) -> Optional[Dict[str, Any]]:
+        """Fetch the broker's current, still-forming candle for a live quote.
+
+        This is read-only market data from the same authenticated session. It is
+        intentionally separate from closed-candle history used by indicators.
+        """
+        try:
+            response = await self._client.send_request(
+                10,
+                [{"pair": pair, "size": 60, "to": int(time.time()), "solid": False}],
+                requires_response=True,
+            )
+            if not (response and response.get("e") in (10, 1003)):
+                logger.warning(
+                    "LIVE_QUOTE_RESPONSE_REJECTED pair=%s response=%s",
+                    pair, response
+                )
+                return None
+            payload = response.get("d")
+            items = payload if isinstance(payload, list) else [payload]
+            candles=[]
+            for item in items:
+                if isinstance(item, dict) and isinstance(item.get("candles"), list):
+                    candles.extend(x for x in item["candles"] if isinstance(x, dict))
+                elif isinstance(item, dict) and any(
+                    k in item for k in ("open","o","high","h","low","l","close","c")
+                ):
+                    candles.append(item)
+            if not candles:
+                logger.warning("LIVE_QUOTE_EMPTY pair=%s", pair)
+                return None
+            candles.sort(key=lambda x: float(x.get("time", x.get("t", 0)) or 0))
+            current = candles[-1]
+            price = current.get("close", current.get("c"))
+            if price is None:
+                return None
+            return {
+                "pair": pair,
+                "price": float(price),
+                "candle": current,
+                "received_at": time.time(),
+            }
+        except Exception as e:
+            logger.warning(
+                "LIVE_QUOTE_FAILED pair=%s type=%s message=%s",
+                pair, type(e).__name__, str(e)[:140]
+            )
+            return None
+
     async def get_profitability(self, account_id: int) -> Optional[List[Dict[str, Any]]]:
         try:
             response = await self._client.send_request(182, [{"account_id": account_id}], requires_response=True)
