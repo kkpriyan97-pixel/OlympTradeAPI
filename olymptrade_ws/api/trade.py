@@ -164,14 +164,14 @@ class TradeAPI:
             logger.error(f"Exception placing order: {e}")
             return None
 
-    async def get_open_trades(self, account_id: int, group: str = "real") -> Optional[list[Dict[str, Any]]]:
+    async def get_open_trades(self, account_id: int, group: str = "demo") -> Optional[list[Dict[str, Any]]]:
          """
          Requests currently open trades.
          NOTE: Event 31 is used in logs, but the response 'd' is empty.
                This might require different parameters or the log missed the actual data push.
                Functionality needs verification.
          """
-         logger.warning("Requesting open trades (e:31) functionality needs verification.")
+         logger.info("Requesting open trades (e:31) account_id=%s group=%s", account_id, group)
          event_code = 31
          data = [{"account_id": account_id, "group": group}]
          try:
