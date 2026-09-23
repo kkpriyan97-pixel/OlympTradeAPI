@@ -193,6 +193,69 @@ class TradeAPI:
              logger.error(f"Failed to get open trades: {e}")
              return None
 
+    async def place_flex_order(
+        self,
+        pair: str,
+        amount: Union[int, float],
+        direction: Literal["up", "down"],
+        duration: int,
+        account_id: int,
+        group: Literal["real", "demo"] = "demo",
+        source: str = "platform",
+        pos: int = 0,
+        timestamp: Optional[int] = None,
+        risk_free_id: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Place a Flex trade using the broker Event-23 order envelope.
+
+        Flex is selected with the is_flex flag. Result tracking uses Event-22
+        and Event-26 callbacks; Event-31 is not a Flex visibility requirement.
+        """
+        event_code = 23
+        if timestamp is None:
+            timestamp = get_current_timestamp_ms()
+        data = [{
+            "amount": amount,
+            "dir": direction,
+            "pair": pair,
+            "cat": "digital",
+            "pos": pos,
+            "source": source,
+            "account_id": account_id,
+            "group": group,
+            "timestamp": timestamp,
+            "risk_free_id": risk_free_id,
+            "is_flex": True,
+            "duration": duration,
+        }]
+        logger.info(
+            "Placing %s FLEX order: %s %s $%s for %ss account_id=%s",
+            group, pair, direction, amount, duration, account_id
+        )
+        try:
+            response = await self._client.send_request(
+                event_code, data, requires_response=True
+            )
+            if response and response.get("e") == event_code:
+                details = response.get("d")
+                if isinstance(details, list) and details:
+                    initial = details[0]
+                    logger.info(
+                        "FLEX order accepted ID=%s status=%s",
+                        initial.get("id"), initial.get("status")
+                    )
+                    return initial
+                logger.error("FLEX order response had no trade details: %s", details)
+                return None
+            logger.error(
+                "FLEX order rejected response=%s",
+                response.get("d") if response else "No response"
+            )
+            return None
+        except Exception as e:
+            logger.error("Exception placing FLEX order: %s", e)
+            return None
+
     # Add subscribe/unsubscribe for trade updates (e:21, e:22, e:26) if needed,
     # likely using the generic event 98 subscription mechanism.
 
