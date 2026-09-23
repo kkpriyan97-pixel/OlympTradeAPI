@@ -205,6 +205,7 @@ class TradeAPI:
         pos: int = 0,
         timestamp: Optional[int] = None,
         risk_free_id: Optional[int] = None,
+        category: Literal["digital", "forex", "stocks"] = "forex",
     ) -> Optional[Dict[str, Any]]:
         """Place a Flex trade using the broker Event-23 order envelope.
 
@@ -218,7 +219,7 @@ class TradeAPI:
             "amount": amount,
             "dir": direction,
             "pair": pair,
-            "cat": "digital",
+            "cat": category,
             "pos": pos,
             "source": source,
             "account_id": account_id,
@@ -229,8 +230,8 @@ class TradeAPI:
             "duration": duration,
         }]
         logger.info(
-            "Placing %s FLEX order: %s %s $%s for %ss account_id=%s",
-            group, pair, direction, amount, duration, account_id
+            "Placing %s FLEX order: %s %s $%s for %ss account_id=%s category=%s",
+            group, pair, direction, amount, duration, account_id, category
         )
         try:
             response = await self._client.send_request(
