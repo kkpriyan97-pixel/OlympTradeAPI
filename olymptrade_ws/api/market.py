@@ -374,6 +374,91 @@ class MarketAPI:
         logger.info(f"First authenticated asset: {pair}")
         return first
 
+    async def probe_asset_tradeability(
+        self,
+        pair: str,
+        category: str = "digital",
+        timeout: float = 2.0,
+    ) -> Optional[Dict[str, Any]]:
+        """Read-only probe for current broker tradeability via events 95 + 80.
+
+        Event 182 can keep listing an instrument while terminal trading is
+        temporarily closed. This probe requests a fresh strike response and
+        deliberately ignores cached event-80 data. It never places an order.
+        """
+        pair = str(pair or "").strip()
+        if not pair:
+            return None
+
+        future = asyncio.get_running_loop().create_future()
+
+        async def strike_callback(message: Dict[str, Any]):
+            payload = message.get("d", []) if isinstance(message, dict) else []
+            items = payload if isinstance(payload, list) else [payload]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_pair = str(item.get("p") or item.get("pair") or item.get("symbol") or "").strip()
+                if item_pair != pair:
+                    continue
+                status = str(item.get("status") or item.get("state") or "").strip().lower()
+                explicitly_blocked = bool(
+                    item.get("disabled") is True
+                    or item.get("locked") is True
+                    or item.get("locked_trading") is True
+                    or any(
+                        item.get(k) is False
+                        for k in ("active", "available", "tradable", "is_active", "is_available", "is_tradable")
+                        if k in item
+                    )
+                    or status in {"disabled", "locked", "inactive", "unavailable", "closed", "off"}
+                )
+                if not future.done():
+                    future.set_result(None if explicitly_blocked else dict(item))
+                break
+
+        self._client.register_callback(80, strike_callback)
+        try:
+            response = await self._client.send_request(
+                95,
+                [{"cat": category, "pair": pair}],
+                requires_response=True,
+                timeout=min(3.0, max(0.75, float(timeout) + 0.5)),
+            )
+            if not (isinstance(response, dict) and response.get("e") == 95):
+                logger.info(
+                    "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s stage=event95 response=%s",
+                    pair, response,
+                )
+                return None
+            try:
+                result = await asyncio.wait_for(future, timeout=max(0.5, float(timeout)))
+            except asyncio.TimeoutError:
+                logger.info(
+                    "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s stage=event80 reason=timeout",
+                    pair,
+                )
+                return None
+            if result is None:
+                logger.info(
+                    "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s stage=event80 reason=explicitly_blocked",
+                    pair,
+                )
+                return None
+            logger.info(
+                "ASSET_TRADEABILITY_PROBE_OK pair=%s source=event95+event80",
+                pair,
+            )
+            return result
+        except Exception as e:
+            logger.info(
+                "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s type=%s message=%s",
+                pair, type(e).__name__, str(e)[:140],
+            )
+            return None
+        finally:
+            self._client.unregister_callback(80, strike_callback)
+
     async def select_asset(self, pair: str, category: str = "digital") -> Optional[Dict[str, Any]]:
         logger.info(f"Selecting asset {pair} (category: {category})...")
         try:
