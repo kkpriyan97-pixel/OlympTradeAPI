@@ -67,28 +67,129 @@ class MarketAPI:
         await self._client.send_request(13, [{"pair": pair}], requires_response=True)
         logger.info(f"Successfully sent tick unsubscription request for {pair} (event 13).")
 
-    async def get_candles(self, pair: str, size: int, count: int, end_time: Optional[Union[datetime, int]] = None, solid: bool = True) -> Optional[List[Dict[str, Any]]]:
+    async def get_candles(
+        self,
+        pair: str,
+        size: int,
+        count: int,
+        end_time: Optional[Union[datetime, int]] = None,
+        solid: bool = True,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetch a deterministic number of candles using cursor-based pagination.
+
+        The websocket candle endpoint is paged by the `to` timestamp; the
+        caller-side `count` is not part of event 10's wire payload. Older
+        versions of this wrapper accepted `count` but silently ignored it,
+        which could leave callers with too little M1 history for analysis.
+        """
+        target = max(1, int(count or 1))
+
         if end_time is None:
-            to_ts = int(time.time())
+            cursor_ts = int(time.time())
         elif isinstance(end_time, datetime):
             if end_time.tzinfo is None:
                 end_time = end_time.replace(tzinfo=timezone.utc)
-            to_ts = int(end_time.timestamp())
+            cursor_ts = int(end_time.timestamp())
         else:
-            to_ts = int(end_time)
+            cursor_ts = int(end_time)
+
+        candles: List[Dict[str, Any]] = []
+        seen = set()
+
+        # Typical server pages are much larger than this; the cap prevents a
+        # malformed/empty endpoint from causing an unbounded request loop.
+        max_pages = max(1, min(8, (target + 14) // 15))
 
         try:
-            response = await self._client.send_request(
-                10,
-                [{"pair": pair, "size": size, "to": to_ts, "solid": bool(solid)}],
-                requires_response=True,
+            for page_no in range(1, max_pages + 1):
+                response = await self._client.send_request(
+                    10,
+                    [{
+                        "pair": pair,
+                        "size": size,
+                        "to": cursor_ts,
+                        "solid": bool(solid),
+                    }],
+                    requires_response=True,
+                )
+
+                if not (
+                    response
+                    and isinstance(response.get("d"), list)
+                    and response.get("e") in (10, 1003)
+                ):
+                    logger.error(
+                        "Did not receive expected candle response "
+                        "(e:10/e:1003) pair=%s page=%d response=%s",
+                        pair, page_no, response,
+                    )
+                    break
+
+                page = [
+                    x for x in response["d"]
+                    if isinstance(x, dict)
+                    and ("time" in x or "t" in x)
+                ]
+                if not page:
+                    break
+
+                before = len(candles)
+                for item in page:
+                    try:
+                        ts = float(item.get("time", item.get("t")))
+                        if ts > 20_000_000_000:
+                            ts /= 1000.0
+                        key = int(ts // max(1, int(size)))
+                    except (TypeError, ValueError):
+                        continue
+                    if key not in seen:
+                        seen.add(key)
+                        candles.append(item)
+
+                if len(candles) >= target:
+                    break
+
+                # Move the cursor strictly before the oldest returned candle.
+                valid_ts = []
+                for item in page:
+                    try:
+                        ts = float(item.get("time", item.get("t")))
+                        if ts > 20_000_000_000:
+                            ts /= 1000.0
+                        valid_ts.append(ts)
+                    except (TypeError, ValueError):
+                        pass
+
+                if not valid_ts:
+                    break
+
+                oldest = min(valid_ts)
+                next_cursor = int(oldest) - 1
+                if next_cursor >= cursor_ts or len(candles) == before:
+                    break
+                cursor_ts = next_cursor
+
+            if not candles:
+                logger.error("CANDLE_FETCH_EMPTY pair=%s count=%d", pair, target)
+                return None
+
+            candles.sort(
+                key=lambda x: float(x.get("time", x.get("t", 0)) or 0)
             )
-            if response and isinstance(response.get("d"), list) and response.get("e") in (10, 1003):
-                return response["d"]
-            logger.error(f"Did not receive expected candle response (e:10/e:1003). Got: {response}")
+            if len(candles) < target:
+                logger.warning(
+                    "CANDLE_FETCH_SHORT pair=%s requested=%d received=%d",
+                    pair, target, len(candles),
+                )
+            return candles[-target:]
+
         except Exception as e:
-            logger.error(f"Failed to get candles for {pair}: {e}")
-        return None
+            logger.error(
+                "Failed to get candles for %s count=%d: %s",
+                pair, target, e,
+            )
+            return None
 
     async def get_live_quote(self, pair: str) -> Optional[Dict[str, Any]]:
         """Fetch the broker's current, still-forming candle for a live quote.
