@@ -126,12 +126,35 @@ class MarketAPI:
                     )
                     break
 
+                # Event-10 may return candles directly or wrapped inside
+                # one/more {"candles": [...]} payload objects. Normalize both
+                # forms before pagination; otherwise every history request can
+                # look empty even though the authenticated broker returned bars.
+                raw_items=response["d"]
+                items=[]
+                if isinstance(raw_items,list):
+                    for item in raw_items:
+                        if isinstance(item,dict) and isinstance(item.get("candles"),list):
+                            items.extend(x for x in item["candles"] if isinstance(x,dict))
+                        elif isinstance(item,dict):
+                            items.append(item)
+                elif isinstance(raw_items,dict):
+                    if isinstance(raw_items.get("candles"),list):
+                        items.extend(x for x in raw_items["candles"] if isinstance(x,dict))
+                    else:
+                        items.append(raw_items)
+
                 page = [
-                    x for x in response["d"]
+                    x for x in items
                     if isinstance(x, dict)
                     and ("time" in x or "t" in x)
+                    and any(k in x for k in ("open","o","high","h","low","l","close","c"))
                 ]
                 if not page:
+                    logger.warning(
+                        "CANDLE_PAGE_EMPTY pair=%s page=%d payload_type=%s",
+                        pair,page_no,type(raw_items).__name__
+                    )
                     break
 
                 before = len(candles)
