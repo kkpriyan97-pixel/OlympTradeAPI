@@ -151,11 +151,63 @@ class MarketAPI:
                     and any(k in x for k in ("open","o","high","h","low","l","close","c"))
                 ]
                 if not page:
-                    logger.warning(
-                        "CANDLE_PAGE_EMPTY pair=%s page=%d payload_type=%s",
-                        pair,page_no,type(raw_items).__name__
-                    )
-                    break
+                    # The broker can transiently return an empty event-10 page
+                    # during high parallel market traffic. Retry the same page
+                    # twice before giving up so the caller does not immediately
+                    # discard an otherwise healthy candle request.
+                    recovered_page = None
+                    retry_to = int(cursor_ts)
+                    for empty_retry in range(1, 3):
+                        await asyncio.sleep(0.12 * empty_retry)
+                        retry_response = await self._client.send_request(
+                            10,
+                            [{
+                                "pair": pair,
+                                "size": size,
+                                "to": retry_to,
+                                "solid": bool(solid),
+                            }],
+                            requires_response=True,
+                        )
+                        if not (
+                            retry_response
+                            and isinstance(retry_response.get("d"), list)
+                            and retry_response.get("e") in (10, 1003)
+                        ):
+                            continue
+                        retry_raw = retry_response["d"]
+                        retry_items = []
+                        if isinstance(retry_raw, list):
+                            for item in retry_raw:
+                                if isinstance(item, dict) and isinstance(item.get("candles"), list):
+                                    retry_items.extend(x for x in item["candles"] if isinstance(x, dict))
+                                elif isinstance(item, dict):
+                                    retry_items.append(item)
+                        elif isinstance(retry_raw, dict):
+                            if isinstance(retry_raw.get("candles"), list):
+                                retry_items.extend(x for x in retry_raw["candles"] if isinstance(x, dict))
+                            else:
+                                retry_items.append(retry_raw)
+                        candidate_page = [
+                            x for x in retry_items
+                            if isinstance(x, dict)
+                            and ("time" in x or "t" in x)
+                            and any(k in x for k in ("open","o","high","h","low","l","close","c"))
+                        ]
+                        if candidate_page:
+                            recovered_page = candidate_page
+                            logger.info(
+                                "CANDLE_PAGE_RECOVERED pair=%s page=%d retry=%d",
+                                pair,page_no,empty_retry
+                            )
+                            break
+                    if recovered_page is None:
+                        logger.warning(
+                            "CANDLE_PAGE_EMPTY pair=%s page=%d payload_type=%s",
+                            pair,page_no,type(raw_items).__name__
+                        )
+                        break
+                    page = recovered_page
 
                 before = len(candles)
                 for item in page:
