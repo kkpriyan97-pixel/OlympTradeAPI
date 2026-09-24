@@ -430,26 +430,82 @@ class MarketAPI:
                     "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s stage=event95 response=%s",
                     pair, response,
                 )
-                return None
+                return {"__broker_tradeable": False, "__probe_reason": "event95_rejected"}
+
+            # Some broker builds return a direct strike/market record in the
+            # event-95 response instead of emitting event 80. Use that payload
+            # first when it contains explicit availability fields.
+            direct_payload=response.get("d")
+            direct_items=direct_payload if isinstance(direct_payload,list) else [direct_payload]
+            for direct in direct_items:
+                if not isinstance(direct,dict):
+                    continue
+                direct_pair=str(
+                    direct.get("p") or direct.get("pair") or direct.get("symbol") or ""
+                ).strip()
+                if direct_pair and direct_pair != pair:
+                    continue
+                status=str(direct.get("status") or direct.get("state") or "").strip().lower()
+                availability_keys=(
+                    "disabled","locked","locked_trading","active","available",
+                    "tradable","is_active","is_available","is_tradable"
+                )
+                has_explicit=(
+                    any(k in direct for k in availability_keys) or bool(status)
+                )
+                explicit_block=(
+                    direct.get("disabled") is True
+                    or direct.get("locked") is True
+                    or direct.get("locked_trading") is True
+                    or any(
+                        direct.get(k) is False
+                        for k in ("active","available","tradable","is_active","is_available","is_tradable")
+                        if k in direct
+                    )
+                    or status in {"disabled","locked","inactive","unavailable","closed","off"}
+                )
+                if has_explicit:
+                    if explicit_block:
+                        logger.info(
+                            "ASSET_TRADEABILITY_PROBE_CLOSED pair=%s stage=event95_direct status=%s keys=%s",
+                            pair,status,sorted(direct.keys())[:40]
+                        )
+                        return {
+                            "__broker_tradeable": False,
+                            "__probe_reason": "event95_direct_closed",
+                            "__details": dict(direct),
+                        }
+                    logger.info(
+                        "ASSET_TRADEABILITY_PROBE_OPEN pair=%s stage=event95_direct keys=%s",
+                        pair,sorted(direct.keys())[:40]
+                    )
+                    return {
+                        "__broker_tradeable": True,
+                        "__probe_reason": "event95_direct_open",
+                        "__details": dict(direct),
+                    }
             try:
                 result = await asyncio.wait_for(future, timeout=max(0.5, float(timeout)))
             except asyncio.TimeoutError:
                 logger.info(
-                    "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s stage=event80 reason=timeout",
+                    "ASSET_TRADEABILITY_PROBE_UNKNOWN pair=%s stage=event80 reason=timeout",
                     pair,
                 )
                 return None
             if result is None:
                 logger.info(
-                    "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s stage=event80 reason=explicitly_blocked",
+                    "ASSET_TRADEABILITY_PROBE_CLOSED pair=%s stage=event80 reason=explicitly_blocked",
                     pair,
                 )
-                return None
+                return {"__broker_tradeable": False, "__probe_reason": "event80_closed"}
             logger.info(
-                "ASSET_TRADEABILITY_PROBE_OK pair=%s source=event95+event80",
+                "ASSET_TRADEABILITY_PROBE_OPEN pair=%s source=event95+event80",
                 pair,
             )
-            return result
+            payload=dict(result)
+            payload["__broker_tradeable"]=True
+            payload["__probe_reason"]="event80_open"
+            return payload
         except Exception as e:
             logger.info(
                 "ASSET_TRADEABILITY_PROBE_REJECTED pair=%s type=%s message=%s",
